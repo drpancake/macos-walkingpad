@@ -11,6 +11,7 @@ mkdir -p "$APP_DIR/Contents/MacOS"
 mkdir -p "$APP_DIR/Contents/Resources"
 
 cp Info.plist "$APP_DIR/Contents/Info.plist"
+cp AppIcon.icns "$APP_DIR/Contents/Resources/AppIcon.icns"
 
 swiftc \
     -o "$APP_DIR/Contents/MacOS/$APP_NAME" \
@@ -18,7 +19,6 @@ swiftc \
     -parse-as-library \
     Sources/WalkingPad/App.swift \
     Sources/WalkingPad/BLEManager.swift \
-    Sources/WalkingPad/SpotifyManager.swift \
     Sources/WalkingPad/Views.swift \
     -framework SwiftUI \
     -framework AppKit \

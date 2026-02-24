@@ -4,7 +4,6 @@ import SwiftUI
 
 struct PopoverView: View {
     @ObservedObject var ble: BLEManager
-    @ObservedObject var spotify: SpotifyManager
 
     var body: some View {
         VStack(spacing: 0) {
@@ -17,11 +16,6 @@ struct PopoverView: View {
                     SpeedDisplayView(ble: ble)
                     ControlsView(ble: ble)
                     SpeedControlView(ble: ble)
-
-                    if ble.beltState == .running {
-                        Divider()
-                        MusicView(spotify: spotify)
-                    }
 
                     Divider()
 
@@ -358,98 +352,6 @@ struct SpeedControlView: View {
         let next = max(ble.targetSpeed - 0.5, ble.speedRange.min)
         ble.targetSpeed = next
         ble.setSpeed(next)
-    }
-}
-
-// MARK: - Music Zones
-
-struct MusicView: View {
-    @ObservedObject var spotify: SpotifyManager
-
-    var body: some View {
-        VStack(spacing: 8) {
-            HStack {
-                SectionHeader(title: "AUTO MUSIC")
-                Spacer()
-                Toggle("", isOn: $spotify.isEnabled)
-                    .toggleStyle(.switch)
-                    .controlSize(.mini)
-                    .labelsHidden()
-            }
-
-            if !spotify.currentTrack.isEmpty {
-                HStack(spacing: 8) {
-                    Image(systemName: "music.note")
-                        .font(.system(size: 11))
-                        .foregroundColor(zoneColor(spotify.currentZoneIndex))
-
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(spotify.currentTrack)
-                            .font(.system(size: 11, weight: .medium))
-                            .lineLimit(1)
-                        Text(spotify.currentArtist)
-                            .font(.system(size: 10))
-                            .foregroundColor(.secondary)
-                            .lineLimit(1)
-                    }
-
-                    Spacer()
-                }
-                .padding(8)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(zoneColor(spotify.currentZoneIndex).opacity(0.08))
-                )
-            }
-        }
-    }
-
-    func zoneColor(_ index: Int) -> Color {
-        switch index {
-        case 0: return .cyan
-        case 1: return .purple
-        case 2: return .orange
-        case 3: return .red
-        default: return .secondary
-        }
-    }
-}
-
-struct ZonePill: View {
-    let zone: MusicZone
-    let isActive: Bool
-    let isPending: Bool
-
-    var color: Color {
-        switch zone.id {
-        case 0: return .cyan
-        case 1: return .purple
-        case 2: return .orange
-        case 3: return .red
-        default: return .gray
-        }
-    }
-
-    var body: some View {
-        VStack(spacing: 2) {
-            Text(zone.emoji)
-                .font(.system(size: 16))
-            Text(zone.name)
-                .font(.system(size: 8, weight: .bold))
-            Text(zone.maxSpeed.isFinite ? "≤\(String(format: "%.0f", zone.maxSpeed))" : "MAX")
-                .font(.system(size: 7))
-                .foregroundColor(.secondary)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 6)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(isActive ? color.opacity(0.2) : Color.secondary.opacity(0.05))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(isActive ? color : Color.clear, lineWidth: 2)
-        )
     }
 }
 

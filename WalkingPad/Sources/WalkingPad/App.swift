@@ -14,13 +14,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var statusItem: NSStatusItem!
     var popover: NSPopover!
     let ble = BLEManager()
-    let spotify = SpotifyManager()
     var updateTimer: Timer?
-    var tickCount = 0
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        NSApp.setActivationPolicy(.accessory)
-
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = statusItem.button {
             button.title = " 🚶"
@@ -32,7 +28,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         popover.contentSize = NSSize(width: 320, height: 700)
         popover.behavior = .transient
         popover.contentViewController = NSHostingController(
-            rootView: PopoverView(ble: ble, spotify: spotify)
+            rootView: PopoverView(ble: ble)
         )
 
         updateTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
@@ -42,18 +38,23 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func tick() {
         updateMenuBar()
-        spotify.tick(speed: ble.speed, beltRunning: ble.beltState == .running)
-        tickCount += 1
-        if tickCount % 10 == 0 {
-            spotify.fetchNowPlaying()
-        }
     }
 
     func updateMenuBar() {
         guard let button = statusItem?.button else { return }
 
+        let dot: String
+        switch ble.connectionState {
+        case .connected:
+            dot = "🟢"
+        case .scanning, .connecting, .discovering:
+            dot = "🟡"
+        case .bluetoothOff, .unauthorized, .disconnected:
+            dot = "🔴"
+        }
+
         if !ble.isConnected {
-            button.title = " 🚶"
+            button.title = "\(dot) 🚶"
             return
         }
 
@@ -61,9 +62,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let dist = menuBarDistance(ble.distance)
 
         if ble.speed > 0 {
-            button.title = " \(icon) \(String(format: "%.1f", ble.speed))km/h · \(dist)"
+            button.title = "\(dot) \(icon) \(String(format: "%.1f", ble.speed))km/h · \(dist)"
         } else {
-            button.title = " \(icon) \(dist)"
+            button.title = "\(dot) \(icon) \(dist)"
         }
     }
 

@@ -16,8 +16,8 @@
     <string>1</string>
     <key>LSMinimumSystemVersion</key>
     <string>13.0</string>
-    <key>LSUIElement</key>
-    <true/>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>NSBluetoothAlwaysUsageDescription</key>
     <string>WalkingPad needs Bluetooth to connect to and control your treadmill.</string>
 </dict>

@@ -72,13 +72,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func menuBarDailyProgress() -> String {
         let km = Double(ble.dailyDistance) / 1000.0
         if ble.goalReached {
-            return String(format: "%.1fkm ✓", km)
+            return String(format: "%.2fkm ✓", km)
         }
         let goalKm = ble.profile.dailyGoalKm
         if goalKm == goalKm.rounded() {
-            return String(format: "%.1f/%.0fkm", km, goalKm)
+            return String(format: "%.2f/%.0fkm", km, goalKm)
         }
-        return String(format: "%.1f/%.1fkm", km, goalKm)
+        return String(format: "%.2f/%.1fkm", km, goalKm)
     }
 
     @objc func togglePopover() {

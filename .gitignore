@@ -1,0 +1,17 @@
+# Build artifacts
+WalkingPad/build/
+
+# macOS
+.DS_Store
+*.swp
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# IDE
+.vscode/
+.idea/
+*.xcworkspace/
+.swiftpm/

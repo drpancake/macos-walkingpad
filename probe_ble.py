@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Probe all BLE characteristics on the WalkingPad Z1D."""
+"""Probe all BLE characteristics on a WalkingPad/KingSmith treadmill."""
 import asyncio, struct
 from bleak import BleakClient
 
-ADDRESS = "B77D8D0E-3780-81A2-F193-5A68232DFDD1"
+ADDRESS = "YOUR_DEVICE_ADDRESS"  # Use walkingpad.py scan to find this
 
 def hexdump(data):
     return " ".join(f"{b:02x}" for b in data)

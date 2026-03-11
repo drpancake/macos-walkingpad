@@ -8,39 +8,43 @@ struct PopoverView: View {
 
     var body: some View {
         ZStack {
-            VStack(spacing: 0) {
-                HeaderView(ble: ble, showSettings: $showSettings)
+            if ble.needsOnboarding {
+                OnboardingView(ble: ble)
+            } else {
+                VStack(spacing: 0) {
+                    HeaderView(ble: ble, showSettings: $showSettings)
 
-                Divider()
+                    Divider()
 
-                if showSettings {
-                    SettingsView(ble: ble, showSettings: $showSettings)
-                } else {
-                    VStack(spacing: 16) {
-                        MetricsGridView(ble: ble)
+                    if showSettings {
+                        SettingsView(ble: ble, showSettings: $showSettings)
+                    } else {
+                        VStack(spacing: 16) {
+                            MetricsGridView(ble: ble)
 
-                        DailyGoalView(ble: ble)
+                            DailyGoalView(ble: ble)
 
-                        ControlsView(ble: ble)
+                            ControlsView(ble: ble)
 
-                        SpeedPresetsView(ble: ble)
+                            SpeedPresetsView(ble: ble)
 
-                        Divider()
+                            Divider()
 
-                        WeekHistoryView(ble: ble)
+                            WeekHistoryView(ble: ble)
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.top, 12)
+                        .padding(.bottom, 4)
                     }
-                    .padding(.horizontal, 16)
-                    .padding(.top, 12)
-                    .padding(.bottom, 4)
+
+                    Divider()
+
+                    FooterView(ble: ble)
                 }
 
-                Divider()
-
-                FooterView(ble: ble)
-            }
-
-            if ble.showGoalCelebration {
-                GoalCelebrationView(ble: ble)
+                if ble.showGoalCelebration {
+                    GoalCelebrationView(ble: ble)
+                }
             }
         }
         .frame(width: 320)
@@ -193,10 +197,16 @@ struct DailyGoalView: View {
         min(Double(ble.dailyDistance) / Double(max(ble.dailyGoal, 1)), 1.0)
     }
 
+    var progressMarkers: [Int] {
+        let goal = Int(ble.profile.dailyGoalKm)
+        guard goal > 0 else { return [1] }
+        return Array(1...goal)
+    }
+
     var effectivePace: Double {
         if ble.speed > 0.5 { return ble.speed }
         if ble.avgSpeed > 0.5 { return ble.avgSpeed }
-        return 2.5
+        return ble.profile.defaultSpeedKmh
     }
 
     var timeRemainingText: String {
@@ -264,7 +274,7 @@ struct DailyGoalView: View {
                 Text(String(format: "%.0f%%", progress * 100))
                     .font(.system(size: 11, weight: .medium, design: .monospaced))
                     .foregroundColor(.secondary)
-                Text("/ 5.00 km")
+                Text(String(format: "/ %.2f km", ble.profile.dailyGoalKm))
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundColor(.secondary)
             }
@@ -298,8 +308,8 @@ struct DailyGoalView: View {
                         .animation(.easeInOut(duration: 0.5), value: ble.dailyDistance)
                 }
 
-                ForEach(1...5, id: \.self) { km in
-                    let frac = Double(km) / 5.0
+                ForEach(progressMarkers, id: \.self) { km in
+                    let frac = Double(km) / ble.profile.dailyGoalKm
                     Text("\(km)")
                         .font(.system(size: 8, weight: .bold, design: .rounded))
                         .foregroundColor(
@@ -496,7 +506,7 @@ struct GoalCelebrationView: View {
                 Text("🎉🏆🎉")
                     .font(.system(size: 44))
 
-                Text("5 KM")
+                Text(String(format: "%.0f KM", ble.profile.dailyGoalKm))
                     .font(.system(size: 56, weight: .black, design: .rounded))
                     .foregroundStyle(
                         LinearGradient(
@@ -598,6 +608,97 @@ struct SectionHeader: View {
     }
 }
 
+// MARK: - Onboarding
+
+struct OnboardingView: View {
+    @ObservedObject var ble: BLEManager
+
+    var body: some View {
+        VStack(spacing: 16) {
+            Text("Welcome to WalkingPad")
+                .font(.system(size: 18, weight: .bold, design: .rounded))
+                .padding(.top, 4)
+
+            Text("Set up your profile for accurate calorie tracking.")
+                .font(.system(size: 12))
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+
+            VStack(spacing: 10) {
+                onboardRow("Weight", value: Binding(
+                    get: { String(format: "%.0f", ble.profile.weightKg) },
+                    set: { if let v = Double($0), v > 0 { ble.profile.weightKg = v } }
+                ), unit: "kg")
+
+                onboardRow("Height", value: Binding(
+                    get: { String(format: "%.0f", ble.profile.heightCm) },
+                    set: { if let v = Double($0), v > 0 { ble.profile.heightCm = v } }
+                ), unit: "cm")
+
+                onboardRow("Age", value: Binding(
+                    get: { "\(ble.profile.age)" },
+                    set: { if let v = Int($0), v > 0 { ble.profile.age = v } }
+                ), unit: "years")
+
+                HStack {
+                    Text("Gender")
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    Picker("", selection: $ble.profile.isMale) {
+                        Text("Male").tag(true)
+                        Text("Female").tag(false)
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(width: 140)
+                }
+
+                Divider()
+
+                onboardRow("Daily goal", value: Binding(
+                    get: { String(format: "%.1f", ble.profile.dailyGoalKm) },
+                    set: { if let v = Double($0), v > 0 { ble.profile.dailyGoalKm = v } }
+                ), unit: "km")
+
+                onboardRow("Start speed", value: Binding(
+                    get: { String(format: "%.1f", ble.profile.defaultSpeedKmh) },
+                    set: { if let v = Double($0), v > 0 { ble.profile.defaultSpeedKmh = v } }
+                ), unit: "km/h")
+            }
+
+            Button(action: { ble.saveProfile() }) {
+                Text("Get Started")
+                    .font(.system(size: 13, weight: .semibold))
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 36)
+                    .foregroundColor(.white)
+                    .background(RoundedRectangle(cornerRadius: 8).fill(Color.accentColor))
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 16)
+    }
+
+    func onboardRow(_ label: String, value: Binding<String>, unit: String) -> some View {
+        HStack {
+            Text(label)
+                .font(.system(size: 12))
+                .foregroundColor(.secondary)
+            Spacer()
+            TextField("", text: value)
+                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                .multilineTextAlignment(.trailing)
+                .frame(width: 60)
+                .textFieldStyle(.roundedBorder)
+            Text(unit)
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
+                .frame(width: 35, alignment: .leading)
+        }
+    }
+}
+
 // MARK: - Settings
 
 struct SettingsView: View {
@@ -636,6 +737,20 @@ struct SettingsView: View {
                     .pickerStyle(.segmented)
                     .frame(width: 140)
                 }
+            }
+
+            SectionHeader(title: "WALKING")
+
+            VStack(spacing: 10) {
+                settingsRow("Daily goal", value: Binding(
+                    get: { String(format: "%.1f", ble.profile.dailyGoalKm) },
+                    set: { if let v = Double($0), v > 0 { ble.profile.dailyGoalKm = v } }
+                ), unit: "km")
+
+                settingsRow("Start speed", value: Binding(
+                    get: { String(format: "%.1f", ble.profile.defaultSpeedKmh) },
+                    set: { if let v = Double($0), v > 0 { ble.profile.defaultSpeedKmh = v } }
+                ), unit: "km/h")
             }
 
             Button(action: {

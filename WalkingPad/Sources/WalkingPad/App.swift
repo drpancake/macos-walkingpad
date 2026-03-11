@@ -74,7 +74,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if ble.goalReached {
             return String(format: "%.1fkm ✓", km)
         }
-        return String(format: "%.1f/5km", km)
+        let goalKm = ble.profile.dailyGoalKm
+        if goalKm == goalKm.rounded() {
+            return String(format: "%.1f/%.0fkm", km, goalKm)
+        }
+        return String(format: "%.1f/%.1fkm", km, goalKm)
     }
 
     @objc func togglePopover() {

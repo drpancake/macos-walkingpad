@@ -4,7 +4,7 @@
 import asyncio
 from bleak import BleakClient
 
-ADDRESS = "B77D8D0E-3780-81A2-F193-5A68232DFDD1"
+ADDRESS = "YOUR_DEVICE_ADDRESS"  # Use walkingpad.py scan to find this
 
 async def discover():
     async with BleakClient(ADDRESS) as client:

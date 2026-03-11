@@ -87,10 +87,12 @@ struct DayRecord: Codable {
 }
 
 struct UserProfile: Codable {
-    var weightKg: Double = 78.0
-    var heightCm: Double = 178.0
-    var age: Int = 35
+    var weightKg: Double = 70.0
+    var heightCm: Double = 170.0
+    var age: Int = 30
     var isMale: Bool = true
+    var defaultSpeedKmh: Double = 2.5
+    var dailyGoalKm: Double = 5.0
 }
 
 struct WalkPadStore: Codable {
@@ -98,6 +100,7 @@ struct WalkPadStore: Codable {
     var lastActivityTime: Double = 0
     var sessionCalories: Double = 0
     var profile: UserProfile = UserProfile()
+    var onboardingDone: Bool = false
 
     init() {}
 
@@ -107,6 +110,7 @@ struct WalkPadStore: Codable {
         lastActivityTime = (try? c.decode(Double.self, forKey: .lastActivityTime)) ?? 0
         sessionCalories = (try? c.decode(Double.self, forKey: .sessionCalories)) ?? 0
         profile = (try? c.decode(UserProfile.self, forKey: .profile)) ?? UserProfile()
+        onboardingDone = (try? c.decode(Bool.self, forKey: .onboardingDone)) ?? false
     }
 }
 
@@ -157,10 +161,11 @@ class BLEManager: NSObject, ObservableObject {
     @Published var dailyCalories: Double = 0.0
     @Published var goalReached: Bool = false
     @Published var showGoalCelebration: Bool = false
-    let dailyGoal: Int = 5000
+    var dailyGoal: Int { Int(profile.dailyGoalKm * 1000) }
 
     // User profile
     @Published var profile: UserProfile = UserProfile()
+    @Published var needsOnboarding: Bool = true
 
     // History & streak
     @Published var dayHistory: [DayHistoryEntry] = []
@@ -195,11 +200,12 @@ class BLEManager: NSObject, ObservableObject {
     // MARK: - Commands
 
     func startBelt() {
-        targetSpeed = 2.5
+        let startSpeed = profile.defaultSpeedKmh
+        targetSpeed = startSpeed
         requestControl()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
             guard let self = self else { return }
-            let raw = UInt16(2.5 * 100)
+            let raw = UInt16(startSpeed * 100)
             self.writeControlPoint(0x02, params: uint16Bytes(raw))
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                 self.writeControlPoint(0x07)
@@ -332,11 +338,16 @@ class BLEManager: NSObject, ObservableObject {
         }
 
         profile = store.profile
+        needsOnboarding = !store.onboardingDone
+        targetSpeed = profile.defaultSpeedKmh
         updateHistoryAndStreak()
     }
 
     func saveProfile() {
         store.profile = profile
+        store.onboardingDone = true
+        needsOnboarding = false
+        targetSpeed = profile.defaultSpeedKmh
         saveToFile()
     }
 
@@ -478,7 +489,7 @@ class BLEManager: NSObject, ObservableObject {
                 let gap = distance - dailyDistance
                 dailyDistance = distance
                 // Estimate calories for the gap using avg speed
-                let pace = avgSpeed > 0.5 ? avgSpeed : (speed > 0.5 ? speed : 2.5)
+                let pace = avgSpeed > 0.5 ? avgSpeed : (speed > 0.5 ? speed : profile.defaultSpeedKmh)
                 let gapMinutes = (Double(gap) / 1000.0 / pace) * 60.0
                 let gapCals = caloriesPerMinute(atSpeedKmh: pace) * gapMinutes
                 dailyCalories += gapCals

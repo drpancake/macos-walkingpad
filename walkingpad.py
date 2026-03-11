@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""WalkingPad Z1D controller using Bluetooth FTMS (Fitness Machine Service)."""
+"""WalkingPad/KingSmith treadmill controller using Bluetooth FTMS (Fitness Machine Service)."""
 
 import asyncio
 import struct
@@ -20,7 +20,7 @@ OP_SET_TARGET_SPEED = 0x02
 OP_START_RESUME    = 0x07
 OP_STOP_PAUSE      = 0x08
 
-DEFAULT_ADDRESS = "B77D8D0E-3780-81A2-F193-5A68232DFDD1"
+DEFAULT_ADDRESS = "YOUR_DEVICE_ADDRESS"  # Use 'scan' command to find this
 
 
 def parse_treadmill_data(data):
@@ -215,7 +215,7 @@ async def connect_and_run(address, command, speed_kmh=None):
 
 
 def usage():
-    print("WalkingPad Z1D Controller")
+    print("WalkingPad Controller")
     print()
     print("Usage: python walkingpad.py <command> [address] [args]")
     print()

@@ -83,28 +83,6 @@ The app ignores the treadmill's calorie readout and uses **ACSM metabolic equati
 3. **Exercise VO2**: `0.1 x speed(m/min)` for walking (<=6 km/h), `0.2 x speed(m/min)` for running
 4. **kcal/min** = (exerciseVO2 + restingVO2) x weight / 1000 x 5.0, accumulated in real-time
 
-## CLI Tool
-
-A standalone Python script is included for command-line control (requires [bleak](https://github.com/hbldh/bleak)):
-
-```bash
-pip install bleak
-
-# Find your treadmill
-python walkingpad.py scan
-
-# Get current status
-python walkingpad.py status <address>
-
-# Start at 2.5 km/h
-python walkingpad.py start <address> 2.5
-
-# Change speed / stop / pause
-python walkingpad.py speed <address> 3.0
-python walkingpad.py stop <address>
-python walkingpad.py pause <address>
-```
-
 ## License
 
 MIT — see [LICENSE](LICENSE).

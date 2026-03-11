@@ -348,6 +348,14 @@ class BLEManager: NSObject, ObservableObject {
         store.onboardingDone = true
         needsOnboarding = false
         targetSpeed = profile.defaultSpeedKmh
+        let wasReached = goalReached
+        goalReached = dailyDistance >= dailyGoal
+        // If goal was raised above current distance, reset celebrated so celebration can re-trigger
+        if wasReached && !goalReached {
+            let today = todayString()
+            store.days[today]?.celebrated = false
+            showGoalCelebration = false
+        }
         saveToFile()
     }
 

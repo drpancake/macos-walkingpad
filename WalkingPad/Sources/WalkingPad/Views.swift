@@ -4,44 +4,56 @@ import SwiftUI
 
 struct PopoverView: View {
     @ObservedObject var ble: BLEManager
+    @State private var showSettings = false
 
     var body: some View {
-        VStack(spacing: 0) {
-            HeaderView(ble: ble)
+        ZStack {
+            VStack(spacing: 0) {
+                HeaderView(ble: ble, showSettings: $showSettings)
 
-            Divider()
+                Divider()
 
-            ScrollView {
-                VStack(spacing: 16) {
-                    SpeedDisplayView(ble: ble)
-                    ControlsView(ble: ble)
-                    SpeedControlView(ble: ble)
+                if showSettings {
+                    SettingsView(ble: ble, showSettings: $showSettings)
+                } else {
+                    VStack(spacing: 16) {
+                        MetricsGridView(ble: ble)
 
-                    Divider()
+                        DailyGoalView(ble: ble)
 
-                    StatsView(ble: ble)
+                        ControlsView(ble: ble)
 
-                    Divider()
+                        SpeedPresetsView(ble: ble)
 
-                    DeviceInfoView(ble: ble)
+                        Divider()
 
+                        WeekHistoryView(ble: ble)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.top, 12)
+                    .padding(.bottom, 4)
                 }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
+
+                Divider()
+
+                FooterView(ble: ble)
             }
 
-            Divider()
-
-            FooterView(ble: ble)
+            if ble.showGoalCelebration {
+                GoalCelebrationView(ble: ble)
+            }
         }
-        .frame(width: 320, height: 700)
+        .frame(width: 320)
+        .fixedSize(horizontal: false, vertical: true)
     }
+
 }
 
 // MARK: - Header
 
 struct HeaderView: View {
     @ObservedObject var ble: BLEManager
+    @Binding var showSettings: Bool
 
     var statusColor: Color {
         switch ble.connectionState {
@@ -53,7 +65,7 @@ struct HeaderView: View {
     }
 
     var body: some View {
-        HStack {
+        HStack(alignment: .top) {
             VStack(alignment: .leading, spacing: 2) {
                 Text("WALKINGPAD")
                     .font(.system(size: 11, weight: .bold, design: .rounded))
@@ -71,15 +83,24 @@ struct HeaderView: View {
                     .font(.system(size: 10))
                     .foregroundColor(.secondary)
             }
+            .padding(.top, 2)
+
+            Button(action: { showSettings.toggle() }) {
+                Image(systemName: showSettings ? "xmark" : "gearshape")
+                    .font(.system(size: 12))
+                    .foregroundColor(.secondary)
+            }
+            .buttonStyle(.plain)
+            .padding(.top, 1)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
     }
 }
 
-// MARK: - Speed Display
+// MARK: - Metrics Grid (2x2)
 
-struct SpeedDisplayView: View {
+struct MetricsGridView: View {
     @ObservedObject var ble: BLEManager
 
     var speedColor: Color {
@@ -90,107 +111,205 @@ struct SpeedDisplayView: View {
     }
 
     var body: some View {
-        VStack(spacing: 4) {
-            HStack(alignment: .firstTextBaseline, spacing: 4) {
-                Text(String(format: "%.1f", ble.speed))
-                    .font(.system(size: 52, weight: .ultraLight, design: .rounded))
-                    .foregroundColor(speedColor)
-                    .monospacedDigit()
-                    .animation(.easeOut(duration: 0.3), value: ble.speed)
-                Text("km/h")
-                    .font(.system(size: 14, weight: .regular, design: .rounded))
-                    .foregroundColor(.secondary)
-            }
-
-            HStack(spacing: 6) {
-                beltStateIcon
-                Text(ble.beltState.rawValue)
-                    .font(.system(size: 11, weight: .medium))
-            }
-            .foregroundColor(beltStateColor)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 3)
-            .background(beltStateColor.opacity(0.12))
-            .cornerRadius(10)
-
-            if ble.speedHistory.count > 2 {
-                SparklineView(
-                    data: ble.speedHistory,
-                    maxValue: ble.speedRange.max,
-                    color: speedColor
+        VStack(spacing: 12) {
+            HStack(spacing: 0) {
+                MetricCell(
+                    value: String(format: "%.1f", ble.speed),
+                    unit: "km/h",
+                    color: speedColor,
+                    icon: "gauge.medium"
                 )
-                .frame(height: 30)
-                .padding(.top, 4)
+                MetricCell(
+                    value: String(format: "%.0f", ble.dailyCalories),
+                    unit: "kcal",
+                    color: .orange,
+                    icon: "flame.fill"
+                )
+            }
+            HStack(spacing: 0) {
+                MetricCell(
+                    value: formatDist(ble.distance),
+                    unit: distUnit(ble.distance),
+                    color: .blue,
+                    icon: "figure.walk"
+                )
+                MetricCell(
+                    value: formatElapsed(ble.elapsed),
+                    unit: "elapsed",
+                    color: .purple,
+                    icon: "clock"
+                )
             }
         }
     }
 
-    var beltStateColor: Color {
-        switch ble.beltState {
-        case .running: return .green
-        case .paused: return .orange
-        case .idle: return .secondary
-        case .unknown: return .gray
-        }
+    func formatDist(_ m: Int) -> String {
+        if m < 1000 { return "\(m)" }
+        return String(format: "%.2f", Double(m) / 1000.0)
     }
 
-    @ViewBuilder
-    var beltStateIcon: some View {
-        switch ble.beltState {
-        case .running: Image(systemName: "figure.walk")
-        case .paused: Image(systemName: "pause.fill")
-        case .idle: Image(systemName: "powersleep")
-        case .unknown: Image(systemName: "questionmark")
-        }
+    func distUnit(_ m: Int) -> String {
+        m < 1000 ? "m" : "km"
+    }
+
+    func formatElapsed(_ s: Int) -> String {
+        let h = s / 3600
+        let m = (s % 3600) / 60
+        let sec = s % 60
+        if h > 0 { return String(format: "%d:%02d:%02d", h, m, sec) }
+        return String(format: "%d:%02d", m, sec)
     }
 }
 
-// MARK: - Sparkline
-
-struct SparklineView: View {
-    let data: [Double]
-    let maxValue: Double
+struct MetricCell: View {
+    let value: String
+    let unit: String
     let color: Color
+    let icon: String
 
     var body: some View {
+        VStack(spacing: 1) {
+            Image(systemName: icon)
+                .font(.system(size: 10))
+                .foregroundColor(color.opacity(0.5))
+            Text(value)
+                .font(.system(size: 32, weight: .ultraLight, design: .rounded))
+                .foregroundColor(color)
+                .monospacedDigit()
+            Text(unit)
+                .font(.system(size: 10, weight: .regular, design: .rounded))
+                .foregroundColor(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+    }
+}
+
+// MARK: - Daily Goal
+
+struct DailyGoalView: View {
+    @ObservedObject var ble: BLEManager
+
+    var progress: Double {
+        min(Double(ble.dailyDistance) / Double(max(ble.dailyGoal, 1)), 1.0)
+    }
+
+    var effectivePace: Double {
+        if ble.speed > 0.5 { return ble.speed }
+        if ble.avgSpeed > 0.5 { return ble.avgSpeed }
+        return 2.5
+    }
+
+    var timeRemainingText: String {
+        let remaining = Double(ble.dailyGoal - ble.dailyDistance)
+        guard remaining > 0 else { return "" }
+        let minutes = Int((remaining / 1000.0 / effectivePace) * 60)
+        if minutes >= 60 {
+            let h = minutes / 60
+            let m = minutes % 60
+            return m > 0 ? "\(h)h \(m)m left" : "\(h)h left"
+        }
+        if minutes <= 0 { return "<1 min left" }
+        return "\(minutes)m left"
+    }
+
+    var paceNote: String {
+        if ble.speed > 0.5 { return "at current pace" }
+        return String(format: "at %.1f km/h", effectivePace)
+    }
+
+    var encouragement: String {
+        if ble.dailyDistance == 0 { return "Let's get moving!" }
+        if progress < 0.25 { return "Every step counts!" }
+        if progress < 0.50 { return "Great start!" }
+        if progress < 0.75 { return "Over halfway!" }
+        if progress < 1.00 { return "Almost there!" }
+        return "Goal crushed!"
+    }
+
+    var body: some View {
+        VStack(spacing: 8) {
+            HStack {
+                Text("TODAY'S GOAL")
+                    .font(.system(size: 10, weight: .bold, design: .rounded))
+                    .foregroundColor(.secondary)
+                Spacer()
+                Text(encouragement)
+                    .font(.system(size: 10, weight: .medium, design: .rounded))
+                    .foregroundColor(progress >= 1.0 ? .orange : .secondary)
+            }
+
+            // Time remaining (prominent)
+            if ble.goalReached {
+                Text("Goal crushed!")
+                    .font(.system(size: 22, weight: .bold, design: .rounded))
+                    .foregroundColor(.orange)
+            } else {
+                VStack(spacing: 2) {
+                    Text(timeRemainingText)
+                        .font(.system(size: 24, weight: .medium, design: .rounded))
+                    Text(paceNote)
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                }
+            }
+
+            // Progress bar with walker
+            progressBar
+
+            // Distance label
+            HStack {
+                Text(String(format: "%.2f km", Double(ble.dailyDistance) / 1000.0))
+                    .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                Spacer()
+                Text(String(format: "%.0f%%", progress * 100))
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundColor(.secondary)
+                Text("/ 5.00 km")
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(.secondary)
+            }
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(progress >= 1.0 ? Color.orange.opacity(0.06) : Color.secondary.opacity(0.04))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(
+                    progress >= 1.0 ? Color.orange.opacity(0.3) : Color.secondary.opacity(0.1),
+                    lineWidth: 1
+                )
+        )
+    }
+
+    var progressBar: some View {
         GeometryReader { geo in
-            if data.count > 1 {
-                let w = geo.size.width
-                let h = geo.size.height
-                let count = data.count
-                let stepX = w / CGFloat(count - 1)
-                let maxY = max(maxValue, 0.1)
+            let w = geo.size.width
+            ZStack(alignment: .leading) {
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(Color.secondary.opacity(0.1))
+                    .frame(height: 28)
 
-                ZStack {
-                    Path { path in
-                        path.move(to: CGPoint(x: 0, y: h))
-                        for i in 0..<count {
-                            let x = CGFloat(i) * stepX
-                            let y = h - h * CGFloat(data[i] / maxY)
-                            path.addLine(to: CGPoint(x: x, y: y))
-                        }
-                        path.addLine(to: CGPoint(x: CGFloat(count - 1) * stepX, y: h))
-                        path.closeSubpath()
-                    }
-                    .fill(
-                        LinearGradient(
-                            colors: [color.opacity(0.25), color.opacity(0.02)],
-                            startPoint: .top, endPoint: .bottom
+                if progress > 0 {
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(progress >= 1.0 ? Color.orange : Color(hue: 0.35, saturation: 0.7, brightness: 0.85))
+                        .frame(width: max(8, w * progress), height: 28)
+                        .animation(.easeInOut(duration: 0.5), value: ble.dailyDistance)
+                }
+
+                ForEach(1...5, id: \.self) { km in
+                    let frac = Double(km) / 5.0
+                    Text("\(km)")
+                        .font(.system(size: 8, weight: .bold, design: .rounded))
+                        .foregroundColor(
+                            progress >= frac ? .white.opacity(0.9) : .secondary.opacity(0.4)
                         )
-                    )
-
-                    Path { path in
-                        for i in 0..<count {
-                            let x = CGFloat(i) * stepX
-                            let y = h - h * CGFloat(data[i] / maxY)
-                            if i == 0 { path.move(to: CGPoint(x: x, y: y)) }
-                            else { path.addLine(to: CGPoint(x: x, y: y)) }
-                        }
-                    }
-                    .stroke(color, lineWidth: 1.5)
+                        .position(x: w * frac - 8, y: 14)
                 }
             }
         }
+        .frame(height: 28)
     }
 }
 
@@ -251,242 +370,188 @@ struct ControlButton: View {
     }
 }
 
-// MARK: - Speed Control
+// MARK: - Speed Presets
 
-struct SpeedControlView: View {
+struct SpeedPresetsView: View {
     @ObservedObject var ble: BLEManager
+
+    var body: some View {
+        HStack(spacing: 8) {
+            presetButton("1", speed: 1.0)
+            presetButton("2.5", speed: 2.5)
+            presetButton("3", speed: 3.0)
+        }
+    }
+
+    func presetButton(_ label: String, speed: Double) -> some View {
+        let selected = abs(ble.targetSpeed - speed) < 0.05
+        return Button(action: {
+            ble.targetSpeed = speed
+            ble.setSpeed(speed)
+        }) {
+            VStack(spacing: 2) {
+                Text(label)
+                    .font(.system(size: 20, weight: .semibold, design: .rounded))
+                Text("km/h")
+                    .font(.system(size: 9))
+                    .foregroundColor(.secondary)
+            }
+            .frame(maxWidth: .infinity)
+            .frame(height: 48)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(selected ? Color.accentColor.opacity(0.2) : Color.secondary.opacity(0.08))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(selected ? Color.accentColor.opacity(0.5) : Color.clear, lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+// MARK: - Week History
+
+struct WeekHistoryView: View {
+    @ObservedObject var ble: BLEManager
+
+    var maxDist: Double {
+        let m = ble.dayHistory.map(\.distance).max() ?? 0
+        return max(Double(m), Double(ble.dailyGoal))
+    }
 
     var body: some View {
         VStack(spacing: 8) {
-            HStack(spacing: 8) {
-                Button(action: nudgeDown) {
-                    Image(systemName: "minus.circle.fill")
-                        .font(.system(size: 18))
-                        .foregroundColor(.secondary)
-                }
-                .buttonStyle(.plain)
-
-                VStack(spacing: 2) {
-                    Slider(
-                        value: $ble.targetSpeed,
-                        in: ble.speedRange.min...ble.speedRange.max,
-                        step: ble.speedRange.increment
-                    ) { editing in
-                        if !editing {
-                            ble.setSpeed(ble.targetSpeed)
-                        }
-                    }
-                    .tint(.accentColor)
-
-                    HStack {
-                        Text(String(format: "%.0f", ble.speedRange.min))
-                        Spacer()
-                        Text(String(format: "Target: %.1f km/h", ble.targetSpeed))
-                            .fontWeight(.medium)
-                        Spacer()
-                        Text(String(format: "%.0f", ble.speedRange.max))
-                    }
-                    .font(.system(size: 9))
+            HStack {
+                Text("LAST 7 DAYS")
+                    .font(.system(size: 10, weight: .bold, design: .rounded))
                     .foregroundColor(.secondary)
+                Spacer()
+                if ble.currentStreak > 0 {
+                    HStack(spacing: 3) {
+                        Text("🔥")
+                            .font(.system(size: 10))
+                        Text("\(ble.currentStreak) day streak")
+                            .font(.system(size: 10, weight: .semibold, design: .rounded))
+                            .foregroundColor(.orange)
+                    }
                 }
+            }
 
-                Button(action: nudgeUp) {
-                    Image(systemName: "plus.circle.fill")
-                        .font(.system(size: 18))
-                        .foregroundColor(.secondary)
+            HStack(alignment: .bottom, spacing: 6) {
+                ForEach(ble.dayHistory) { entry in
+                    VStack(spacing: 3) {
+                        // Distance label
+                        if entry.distance > 0 {
+                            Text(String(format: "%.1fkm", Double(entry.distance) / 1000.0))
+                                .font(.system(size: 8, weight: .medium, design: .rounded))
+                                .foregroundColor(.secondary)
+                        } else {
+                            Text(" ")
+                                .font(.system(size: 8))
+                        }
+
+                        // Bar
+                        RoundedRectangle(cornerRadius: 3)
+                            .fill(barColor(entry))
+                            .frame(height: barHeight(entry.distance))
+
+                        // Day label
+                        Text(entry.dayLabel)
+                            .font(.system(size: 9, weight: entry.isToday ? .bold : .regular, design: .rounded))
+                            .foregroundColor(entry.isToday ? .primary : .secondary)
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+            }
+            .frame(height: 100)
+        }
+    }
+
+    func barHeight(_ distance: Int) -> CGFloat {
+        guard distance > 0 else { return 2 }
+        return max(4, 70 * CGFloat(Double(distance) / maxDist))
+    }
+
+    func barColor(_ entry: DayHistoryEntry) -> Color {
+        if entry.distance >= ble.dailyGoal { return .green }
+        if entry.distance > 0 { return .blue.opacity(0.5) }
+        return .secondary.opacity(0.15)
+    }
+}
+
+// MARK: - Goal Celebration
+
+struct GoalCelebrationView: View {
+    @ObservedObject var ble: BLEManager
+    @State private var appear = false
+    @State private var glowPulse = false
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(appear ? 0.75 : 0)
+
+            VStack(spacing: 16) {
+                Text("🎉🏆🎉")
+                    .font(.system(size: 44))
+
+                Text("5 KM")
+                    .font(.system(size: 56, weight: .black, design: .rounded))
+                    .foregroundStyle(
+                        LinearGradient(
+                            colors: [.yellow, .orange],
+                            startPoint: .top, endPoint: .bottom
+                        )
+                    )
+                    .shadow(color: .orange.opacity(glowPulse ? 0.9 : 0.3), radius: glowPulse ? 30 : 10)
+
+                Text("DAILY GOAL COMPLETE!")
+                    .font(.system(size: 13, weight: .heavy, design: .rounded))
+                    .foregroundColor(.white.opacity(0.9))
+                    .tracking(2)
+
+                VStack(spacing: 4) {
+                    Text(String(format: "%.0f kcal burned", ble.dailyCalories))
+                        .font(.system(size: 15, weight: .semibold, design: .rounded))
+                        .foregroundColor(.orange)
+                    Text(String(format: "%.2f km walked today", Double(ble.dailyDistance) / 1000.0))
+                        .font(.system(size: 12))
+                        .foregroundColor(.white.opacity(0.6))
+                }
+                .padding(.top, 8)
+
+                Button(action: { ble.showGoalCelebration = false }) {
+                    Text("KEEP GOING")
+                        .font(.system(size: 12, weight: .bold, design: .rounded))
+                        .foregroundColor(.black)
+                        .padding(.horizontal, 24)
+                        .padding(.vertical, 10)
+                        .background(
+                            Capsule()
+                                .fill(
+                                    LinearGradient(
+                                        colors: [.yellow, .orange],
+                                        startPoint: .leading,
+                                        endPoint: .trailing
+                                    )
+                                )
+                        )
                 }
                 .buttonStyle(.plain)
+                .padding(.top, 16)
             }
-
-            HStack(spacing: 6) {
-                ForEach(presets, id: \.self) { speed in
-                    Button(action: {
-                        ble.targetSpeed = speed
-                        ble.setSpeed(speed)
-                    }) {
-                        Text(String(format: "%.0f", speed))
-                            .font(.system(size: 11, weight: .semibold, design: .rounded))
-                            .frame(maxWidth: .infinity)
-                            .frame(height: 26)
-                            .background(
-                                RoundedRectangle(cornerRadius: 6)
-                                    .fill(
-                                        abs(ble.targetSpeed - speed) < 0.05
-                                            ? Color.accentColor.opacity(0.2)
-                                            : Color.secondary.opacity(0.08)
-                                    )
-                            )
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 6)
-                                    .stroke(
-                                        abs(ble.targetSpeed - speed) < 0.05
-                                            ? Color.accentColor.opacity(0.5)
-                                            : Color.clear,
-                                        lineWidth: 1
-                                    )
-                            )
-                    }
-                    .buttonStyle(.plain)
-                }
+            .scaleEffect(appear ? 1.0 : 0.3)
+            .opacity(appear ? 1.0 : 0)
+        }
+        .onAppear {
+            withAnimation(.spring(response: 0.6, dampingFraction: 0.65)) {
+                appear = true
+            }
+            withAnimation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true)) {
+                glowPulse = true
             }
         }
-    }
-
-    var presets: [Double] {
-        var result: [Double] = []
-        var v = ceil(ble.speedRange.min)
-        while v <= ble.speedRange.max {
-            result.append(v)
-            v += 1.0
-        }
-        return result
-    }
-
-    func nudgeUp() {
-        let next = min(ble.targetSpeed + 0.5, ble.speedRange.max)
-        ble.targetSpeed = next
-        ble.setSpeed(next)
-    }
-
-    func nudgeDown() {
-        let next = max(ble.targetSpeed - 0.5, ble.speedRange.min)
-        ble.targetSpeed = next
-        ble.setSpeed(next)
-    }
-}
-
-// MARK: - Stats
-
-struct StatsView: View {
-    @ObservedObject var ble: BLEManager
-
-    var body: some View {
-        VStack(spacing: 0) {
-            SectionHeader(title: "SESSION")
-
-            StatRow(icon: "timer", label: "Time", value: formatTime(ble.elapsed))
-            StatRow(icon: "point.topleft.down.to.point.bottomright.curvepath", label: "Distance", value: formatDistance(ble.distance))
-            StatRow(icon: "flame.fill", label: "Calories", value: "\(ble.calories) kcal")
-            StatRow(icon: "speedometer", label: "Avg Speed", value: String(format: "%.1f km/h", ble.avgSpeed))
-            StatRow(icon: "figure.walk", label: "Pace", value: formatPace(ble.speed))
-
-            if ble.steps > 0 {
-                StatRow(icon: "shoeprints.fill", label: "Steps", value: "\(ble.steps)")
-            }
-
-            if !ble.lastMachineEvent.isEmpty {
-                StatRow(icon: "bell.fill", label: "Last Event", value: ble.lastMachineEvent)
-            }
-        }
-    }
-
-    func formatTime(_ seconds: Int) -> String {
-        let h = seconds / 3600
-        let m = (seconds % 3600) / 60
-        let s = seconds % 60
-        if h > 0 { return String(format: "%d:%02d:%02d", h, m, s) }
-        return String(format: "%d:%02d", m, s)
-    }
-
-    func formatDistance(_ meters: Int) -> String {
-        if meters < 1000 { return "\(meters) m" }
-        return String(format: "%.2f km", Double(meters) / 1000.0)
-    }
-
-    func formatPace(_ speedKmh: Double) -> String {
-        guard speedKmh > 0 else { return "–" }
-        let totalSeconds = Int(3600.0 / speedKmh)
-        return String(format: "%d:%02d /km", totalSeconds / 60, totalSeconds % 60)
-    }
-}
-
-// MARK: - Device Info
-
-struct DeviceInfoView: View {
-    @ObservedObject var ble: BLEManager
-
-    var body: some View {
-        VStack(spacing: 0) {
-            SectionHeader(title: "DEVICE")
-
-            StatRow(icon: "building.2", label: "Manufacturer", value: ble.deviceInfo.manufacturer)
-            StatRow(icon: "tag", label: "Model", value: ble.deviceInfo.model)
-            StatRow(icon: "number", label: "Serial", value: ble.deviceInfo.serial)
-            StatRow(icon: "cpu", label: "Hardware", value: ble.deviceInfo.hardware)
-            StatRow(icon: "memorychip", label: "Firmware", value: ble.deviceInfo.firmware)
-            StatRow(icon: "chevron.left.forwardslash.chevron.right", label: "Software", value: ble.deviceInfo.software)
-            StatRow(
-                icon: "gauge.with.dots.needle.33percent",
-                label: "Speed Range",
-                value: String(format: "%.1f – %.1f km/h", ble.speedRange.min, ble.speedRange.max)
-            )
-        }
-    }
-}
-
-// MARK: - Features
-
-struct FeaturesView: View {
-    @ObservedObject var ble: BLEManager
-
-    var body: some View {
-        VStack(spacing: 0) {
-            SectionHeader(title: "FTMS FEATURES")
-
-            FlowLayout(spacing: 4) {
-                ForEach(ble.supportedFeatures, id: \.self) { feature in
-                    Text(feature)
-                        .font(.system(size: 9, weight: .medium))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Color.accentColor.opacity(0.1))
-                        .cornerRadius(4)
-                }
-            }
-        }
-    }
-}
-
-struct FlowLayout: Layout {
-    var spacing: CGFloat = 4
-
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let result = arrange(proposal: proposal, subviews: subviews)
-        return result.size
-    }
-
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        let result = arrange(proposal: proposal, subviews: subviews)
-        for (index, subview) in subviews.enumerated() {
-            if index < result.positions.count {
-                let pos = result.positions[index]
-                subview.place(at: CGPoint(x: bounds.minX + pos.x, y: bounds.minY + pos.y), proposal: .unspecified)
-            }
-        }
-    }
-
-    private func arrange(proposal: ProposedViewSize, subviews: Subviews) -> (size: CGSize, positions: [CGPoint]) {
-        let maxWidth = proposal.width ?? .infinity
-        var positions: [CGPoint] = []
-        var x: CGFloat = 0
-        var y: CGFloat = 0
-        var rowHeight: CGFloat = 0
-        var totalHeight: CGFloat = 0
-
-        for subview in subviews {
-            let size = subview.sizeThatFits(.unspecified)
-            if x + size.width > maxWidth && x > 0 {
-                x = 0
-                y += rowHeight + spacing
-                rowHeight = 0
-            }
-            positions.append(CGPoint(x: x, y: y))
-            rowHeight = max(rowHeight, size.height)
-            x += size.width + spacing
-            totalHeight = y + rowHeight
-        }
-
-        return (CGSize(width: maxWidth, height: totalHeight), positions)
     }
 }
 
@@ -521,40 +586,90 @@ struct FooterView: View {
     }
 }
 
-// MARK: - Shared Components
+// MARK: - Section Header
 
 struct SectionHeader: View {
     let title: String
     var body: some View {
-        HStack {
-            Text(title)
-                .font(.system(size: 10, weight: .bold, design: .rounded))
-                .foregroundColor(.secondary)
-            Spacer()
-        }
-        .padding(.bottom, 6)
+        Text(title)
+            .font(.system(size: 10, weight: .bold, design: .rounded))
+            .foregroundColor(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
-struct StatRow: View {
-    let icon: String
-    let label: String
-    let value: String
+// MARK: - Settings
+
+struct SettingsView: View {
+    @ObservedObject var ble: BLEManager
+    @Binding var showSettings: Bool
 
     var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: icon)
-                .font(.system(size: 10))
-                .foregroundColor(.secondary)
-                .frame(width: 14, alignment: .center)
+        VStack(spacing: 16) {
+            SectionHeader(title: "PROFILE")
+
+            VStack(spacing: 10) {
+                settingsRow("Weight", value: Binding(
+                    get: { String(format: "%.0f", ble.profile.weightKg) },
+                    set: { if let v = Double($0), v > 0 { ble.profile.weightKg = v } }
+                ), unit: "kg")
+
+                settingsRow("Height", value: Binding(
+                    get: { String(format: "%.0f", ble.profile.heightCm) },
+                    set: { if let v = Double($0), v > 0 { ble.profile.heightCm = v } }
+                ), unit: "cm")
+
+                settingsRow("Age", value: Binding(
+                    get: { "\(ble.profile.age)" },
+                    set: { if let v = Int($0), v > 0 { ble.profile.age = v } }
+                ), unit: "years")
+
+                HStack {
+                    Text("Gender")
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    Picker("", selection: $ble.profile.isMale) {
+                        Text("Male").tag(true)
+                        Text("Female").tag(false)
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(width: 140)
+                }
+            }
+
+            Button(action: {
+                ble.saveProfile()
+                showSettings = false
+            }) {
+                Text("Save")
+                    .font(.system(size: 12, weight: .semibold))
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 32)
+                    .background(RoundedRectangle(cornerRadius: 8).fill(Color.accentColor.opacity(0.15)))
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.accentColor.opacity(0.3), lineWidth: 1))
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+    }
+
+    func settingsRow(_ label: String, value: Binding<String>, unit: String) -> some View {
+        HStack {
             Text(label)
                 .font(.system(size: 12))
                 .foregroundColor(.secondary)
             Spacer()
-            Text(value)
+            TextField("", text: value)
                 .font(.system(size: 12, weight: .medium, design: .monospaced))
-                .lineLimit(1)
+                .multilineTextAlignment(.trailing)
+                .frame(width: 60)
+                .textFieldStyle(.roundedBorder)
+            Text(unit)
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
+                .frame(width: 35, alignment: .leading)
         }
-        .padding(.vertical, 2)
     }
 }

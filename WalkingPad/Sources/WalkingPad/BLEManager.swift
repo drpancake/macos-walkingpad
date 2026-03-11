@@ -20,7 +20,6 @@ let hardwareRevUUID       = CBUUID(string: "2A27")
 let firmwareRevUUID       = CBUUID(string: "2A26")
 let softwareRevUUID       = CBUUID(string: "2A28")
 
-// Also try vendor-specific services for extra data (steps, etc.)
 let vendorService1UUID    = CBUUID(string: "FFC0")
 let vendorNotify1UUID     = CBUUID(string: "FFC1")
 let vendorWrite1UUID      = CBUUID(string: "FFC2")
@@ -79,6 +78,46 @@ struct SpeedRange {
     var increment: Double = 0.1
 }
 
+// MARK: - Persistence Models
+
+struct DayRecord: Codable {
+    var distance: Int = 0
+    var calories: Double = 0.0
+    var celebrated: Bool = false
+}
+
+struct UserProfile: Codable {
+    var weightKg: Double = 78.0
+    var heightCm: Double = 178.0
+    var age: Int = 35
+    var isMale: Bool = true
+}
+
+struct WalkPadStore: Codable {
+    var days: [String: DayRecord] = [:]
+    var lastActivityTime: Double = 0
+    var sessionCalories: Double = 0
+    var profile: UserProfile = UserProfile()
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        days = (try? c.decode([String: DayRecord].self, forKey: .days)) ?? [:]
+        lastActivityTime = (try? c.decode(Double.self, forKey: .lastActivityTime)) ?? 0
+        sessionCalories = (try? c.decode(Double.self, forKey: .sessionCalories)) ?? 0
+        profile = (try? c.decode(UserProfile.self, forKey: .profile)) ?? UserProfile()
+    }
+}
+
+struct DayHistoryEntry: Identifiable {
+    let id: String          // date string "2026-03-11"
+    let dayLabel: String    // "Mon", "Tue", etc.
+    let distance: Int       // meters
+    let calories: Double
+    let isToday: Bool
+}
+
 // MARK: - BLE Manager
 
 class BLEManager: NSObject, ObservableObject {
@@ -97,7 +136,7 @@ class BLEManager: NSObject, ObservableObject {
     @Published var steps: Int = 0
 
     // Speed control
-    @Published var targetSpeed: Double = 3.0
+    @Published var targetSpeed: Double = 2.5
     @Published var speedRange: SpeedRange = SpeedRange()
 
     // Device info
@@ -112,6 +151,21 @@ class BLEManager: NSObject, ObservableObject {
     // FTMS machine status log
     @Published var lastMachineEvent: String = ""
 
+    // Daily goal & accurate calorie tracking
+    @Published var calculatedCalories: Double = 0.0
+    @Published var dailyDistance: Int = 0
+    @Published var dailyCalories: Double = 0.0
+    @Published var goalReached: Bool = false
+    @Published var showGoalCelebration: Bool = false
+    let dailyGoal: Int = 5000
+
+    // User profile
+    @Published var profile: UserProfile = UserProfile()
+
+    // History & streak
+    @Published var dayHistory: [DayHistoryEntry] = []
+    @Published var currentStreak: Int = 0
+
     // Internals
     private var centralManager: CBCentralManager!
     private var peripheral: CBPeripheral?
@@ -120,19 +174,32 @@ class BLEManager: NSObject, ObservableObject {
     private var vendorWriteChar2: CBCharacteristic?
     private var shouldReconnect = true
     private var hasRequestedControl = false
+    private var lastRawDistance: Int = -1
+    private var lastCalorieTimestamp: Date?
+    private var lastSaveTime: Date = .distantPast
+    private var store = WalkPadStore()
+
+    private static let dataDir: URL = {
+        let dir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".walkingpad")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }()
+    private static let dataFile = dataDir.appendingPathComponent("data.json")
 
     override init() {
         super.init()
         centralManager = CBCentralManager(delegate: self, queue: nil)
+        loadFromFile()
     }
 
     // MARK: - Commands
 
     func startBelt() {
+        targetSpeed = 2.5
         requestControl()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
             guard let self = self else { return }
-            let raw = UInt16(self.targetSpeed * 100)
+            let raw = UInt16(2.5 * 100)
             self.writeControlPoint(0x02, params: uint16Bytes(raw))
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                 self.writeControlPoint(0x07)
@@ -202,8 +269,6 @@ class BLEManager: NSObject, ObservableObject {
     }
 
     private func queryVendorStats() {
-        // Kingsmith proprietary: ask for extended stats (steps, etc.)
-        // Protocol: f7 a2 <sub> <checksum> fd
         let sub: UInt8 = 0x01
         let checksum = 0xa2 ^ sub
         let cmd = Data([0xf7, 0xa2, sub, checksum, 0xfd])
@@ -216,6 +281,134 @@ class BLEManager: NSObject, ObservableObject {
         }
     }
 
+    // MARK: - Calorie Calculation (ACSM Metabolic Equations)
+    //
+    // Walking (<=6 km/h): VO2 = 0.1 * speed(m/min) + 3.5 ml/kg/min
+    // Running (>6 km/h):  VO2 = 0.2 * speed(m/min) + 3.5 ml/kg/min
+    // kcal/min = VO2 * bodyMass(kg) / 1000 * 5.0
+
+    private func caloriesPerMinute(atSpeedKmh kmh: Double) -> Double {
+        guard kmh > 0.5 else { return 0 }
+        let p = store.profile
+        let speedMpm = kmh * 1000.0 / 60.0
+
+        // Personalized resting VO2 via Mifflin-St Jeor BMR
+        let bmr = 10 * p.weightKg + 6.25 * p.heightCm - 5 * Double(p.age) + (p.isMale ? 5 : -161)
+        let restingVO2 = (bmr / 1440.0) * 1000.0 / (p.weightKg * 5.0)
+
+        // ACSM walking/running exercise component + personalized resting
+        let exerciseVO2 = (kmh <= 6.0 ? 0.1 : 0.2) * speedMpm
+        let totalVO2 = exerciseVO2 + restingVO2
+        return totalVO2 * p.weightKg / 1000.0 * 5.0
+    }
+
+    // MARK: - File Persistence
+
+    private func todayString() -> String {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        return f.string(from: Date())
+    }
+
+    private func loadFromFile() {
+        if let data = try? Data(contentsOf: Self.dataFile),
+           let decoded = try? JSONDecoder().decode(WalkPadStore.self, from: data) {
+            store = decoded
+        }
+
+        let today = todayString()
+        let todayData = store.days[today] ?? DayRecord()
+        dailyDistance = todayData.distance
+        dailyCalories = todayData.calories
+        goalReached = dailyDistance >= dailyGoal
+
+        // Restore session calories if active within last 30 min, otherwise fresh session
+        let inactiveSecs = Date().timeIntervalSince1970 - store.lastActivityTime
+        if inactiveSecs <= 1800 {
+            calculatedCalories = store.sessionCalories
+        } else {
+            calculatedCalories = 0
+            speedHistory = []
+        }
+
+        profile = store.profile
+        updateHistoryAndStreak()
+    }
+
+    func saveProfile() {
+        store.profile = profile
+        saveToFile()
+    }
+
+    private func saveToFile() {
+        let today = todayString()
+        var record = store.days[today] ?? DayRecord()
+        record.distance = dailyDistance
+        record.calories = dailyCalories
+        store.days[today] = record
+        store.sessionCalories = calculatedCalories
+
+        // Prune entries older than 60 days
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        if let cutoff = Calendar.current.date(byAdding: .day, value: -60, to: Date()) {
+            store.days = store.days.filter { key, _ in
+                if let d = f.date(from: key) { return d >= cutoff }
+                return false
+            }
+        }
+
+        if let encoded = try? JSONEncoder().encode(store) {
+            try? encoded.write(to: Self.dataFile, options: .atomic)
+        }
+    }
+
+    func updateHistoryAndStreak() {
+        let cal = Calendar.current
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        let dayF = DateFormatter()
+        dayF.dateFormat = "EEE"
+        let today = Date()
+        let todayStr = f.string(from: today)
+
+        var entries: [DayHistoryEntry] = []
+        for i in (0..<7).reversed() {
+            guard let date = cal.date(byAdding: .day, value: -i, to: today) else { continue }
+            let dateStr = f.string(from: date)
+            let data = store.days[dateStr] ?? DayRecord()
+            entries.append(DayHistoryEntry(
+                id: dateStr,
+                dayLabel: dayF.string(from: date),
+                distance: dateStr == todayStr ? dailyDistance : data.distance,
+                calories: dateStr == todayStr ? dailyCalories : data.calories,
+                isToday: dateStr == todayStr
+            ))
+        }
+        dayHistory = entries
+
+        // Streak: consecutive days hitting goal (today counts if reached)
+        var streak = 0
+        var checkDate = today
+        if dailyDistance >= dailyGoal {
+            streak += 1
+            checkDate = cal.date(byAdding: .day, value: -1, to: checkDate) ?? checkDate
+        } else {
+            checkDate = cal.date(byAdding: .day, value: -1, to: checkDate) ?? checkDate
+        }
+        for _ in 0..<365 {
+            let dateStr = f.string(from: checkDate)
+            let data = store.days[dateStr] ?? DayRecord()
+            if data.distance >= dailyGoal {
+                streak += 1
+                checkDate = cal.date(byAdding: .day, value: -1, to: checkDate) ?? checkDate
+            } else {
+                break
+            }
+        }
+        currentStreak = streak
+    }
+
     // MARK: - FTMS Parsing
 
     fileprivate func parseTreadmillData(_ data: Data) {
@@ -223,60 +416,101 @@ class BLEManager: NSObject, ObservableObject {
         let flags = data.uint16(at: 0)
         var offset = 2
 
-        // Instantaneous Speed (present when bit 0 is 0)
         if (flags & 0x0001) == 0 && offset + 2 <= data.count {
             speed = Double(data.uint16(at: offset)) / 100.0
             offset += 2
         }
-
-        // Average Speed (bit 1)
         if (flags & 0x0002) != 0 && offset + 2 <= data.count {
             avgSpeed = Double(data.uint16(at: offset)) / 100.0
             offset += 2
         }
-
-        // Total Distance (bit 2) — 3 bytes
         if (flags & 0x0004) != 0 && offset + 3 <= data.count {
             distance = Int(data.uint24(at: offset))
             offset += 3
         }
-
-        // Inclination + Ramp (bit 3)
         if (flags & 0x0008) != 0 { offset += 4 }
-        // Elevation Gain (bit 4)
         if (flags & 0x0010) != 0 { offset += 4 }
-        // Instantaneous Pace (bit 5)
         if (flags & 0x0020) != 0 { offset += 1 }
-        // Average Pace (bit 6)
         if (flags & 0x0040) != 0 { offset += 1 }
-
-        // Expended Energy (bit 7): total(2) + per_hour(2) + per_minute(1)
         if (flags & 0x0080) != 0 && offset + 2 <= data.count {
             calories = Int(data.uint16(at: offset))
             offset += 5
         }
-
-        // Heart Rate (bit 8)
         if (flags & 0x0100) != 0 { offset += 1 }
-        // Metabolic Equivalent (bit 9)
         if (flags & 0x0200) != 0 { offset += 1 }
-
-        // Elapsed Time (bit 10)
         if (flags & 0x0400) != 0 && offset + 2 <= data.count {
             elapsed = Int(data.uint16(at: offset))
             offset += 2
         }
 
-        // Infer belt state from speed
+        // Infer belt state
         if speed > 0 {
             beltState = .running
         } else if beltState == .running {
             beltState = .idle
         }
 
-        // Record speed history
+        // Speed history
         speedHistory.append(speed)
         if speedHistory.count > 120 { speedHistory.removeFirst() }
+
+        // Accumulate calculated calories (ACSM-based, 78kg male)
+        let now = Date()
+        if speed > 0 {
+            if let lastTs = lastCalorieTimestamp {
+                let dt = now.timeIntervalSince(lastTs)
+                if dt > 0 && dt < 5 {
+                    let cals = caloriesPerMinute(atSpeedKmh: speed) * dt / 60.0
+                    calculatedCalories += cals
+                    dailyCalories += cals
+                }
+            }
+            lastCalorieTimestamp = now
+            store.lastActivityTime = now.timeIntervalSince1970
+        } else {
+            lastCalorieTimestamp = nil
+        }
+
+        // Track daily distance (delta-based)
+        if lastRawDistance < 0 {
+            // First reading after (re)connection — catch up if treadmill is ahead
+            if distance > dailyDistance {
+                let gap = distance - dailyDistance
+                dailyDistance = distance
+                // Estimate calories for the gap using avg speed
+                let pace = avgSpeed > 0.5 ? avgSpeed : (speed > 0.5 ? speed : 2.5)
+                let gapMinutes = (Double(gap) / 1000.0 / pace) * 60.0
+                let gapCals = caloriesPerMinute(atSpeedKmh: pace) * gapMinutes
+                dailyCalories += gapCals
+                calculatedCalories += gapCals
+            }
+        } else {
+            let delta = distance - lastRawDistance
+            if delta > 0 { dailyDistance += delta }
+        }
+        lastRawDistance = distance
+
+        // Check daily goal
+        if dailyDistance >= dailyGoal && !goalReached {
+            goalReached = true
+            let today = todayString()
+            if !(store.days[today]?.celebrated ?? false) {
+                showGoalCelebration = true
+                var rec = store.days[today] ?? DayRecord()
+                rec.celebrated = true
+                store.days[today] = rec
+            }
+            saveToFile()
+            updateHistoryAndStreak()
+            lastSaveTime = now
+        }
+
+        // Periodic save (every 5s)
+        if now.timeIntervalSince(lastSaveTime) > 5 {
+            saveToFile()
+            updateHistoryAndStreak()
+            lastSaveTime = now
+        }
     }
 
     fileprivate func parseMachineStatus(_ data: Data) {
@@ -332,11 +566,8 @@ class BLEManager: NSObject, ObservableObject {
     }
 
     fileprivate func parseVendorData(_ data: Data) {
-        // Kingsmith proprietary response: f7 a2 ...
         guard data.count >= 3, data[0] == 0xf7 else { return }
-
         if data[1] == 0xa2 && data.count >= 18 {
-            // Extended stats packet — steps are typically at offset 7-10
             let s = Int(data.uint16(at: 7)) | (Int(data.uint16(at: 9)) << 16)
             if s > 0 && s < 1_000_000 { steps = s }
         }
@@ -344,7 +575,6 @@ class BLEManager: NSObject, ObservableObject {
 
     fileprivate func parseTrainingStatus(_ data: Data) {
         guard data.count >= 1 else { return }
-        // 0x01 = idle, 0x0D = quick start
         switch data[0] {
         case 0x01: if beltState != .running { beltState = .idle }
         default: break
@@ -374,7 +604,6 @@ extension BLEManager: CBCentralManagerDelegate {
 
     func centralManager(_ central: CBCentralManager, didDiscover peripheral: CBPeripheral,
                          advertisementData: [String: Any], rssi RSSI: NSNumber) {
-        // Accept any peripheral advertising FTMS (we already filter by service in scan)
         self.peripheral = peripheral
         self.peripheral?.delegate = self
         self.peripheralName = peripheral.name ?? "WalkingPad"
@@ -403,6 +632,8 @@ extension BLEManager: CBCentralManagerDelegate {
         vendorWriteChar2 = nil
         connectionState = .disconnected
         beltState = .unknown
+        lastRawDistance = -1
+        lastCalorieTimestamp = nil
         retryConnection()
     }
 
@@ -428,34 +659,22 @@ extension BLEManager: CBPeripheralDelegate {
     func peripheral(_ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?) {
         for char in service.characteristics ?? [] {
             switch char.uuid {
-            // FTMS notifications
             case treadmillDataUUID, machineStatusUUID, trainingStatusUUID:
                 peripheral.setNotifyValue(true, for: char)
-
-            // Control point (write + indications)
             case controlPointUUID:
                 controlPointChar = char
                 peripheral.setNotifyValue(true, for: char)
-
-            // Readable FTMS chars
             case speedRangeUUID, machineFeatureUUID:
                 peripheral.readValue(for: char)
-
-            // Device info
             case manufacturerNameUUID, modelNumberUUID, serialNumberUUID,
                  hardwareRevUUID, firmwareRevUUID, softwareRevUUID:
                 peripheral.readValue(for: char)
-
-            // Vendor notifications
             case vendorNotify1UUID, vendorNotify2UUID:
                 peripheral.setNotifyValue(true, for: char)
-
-            // Vendor write endpoints
             case vendorWrite1UUID:
                 vendorWriteChar1 = char
             case vendorWrite2UUID:
                 vendorWriteChar2 = char
-
             default:
                 break
             }
@@ -463,7 +682,6 @@ extension BLEManager: CBPeripheralDelegate {
 
         if service.uuid == ftmsServiceUUID {
             connectionState = .connected
-            // Try vendor stats query after a short delay
             DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
                 self?.queryVendorStats()
             }
@@ -479,7 +697,6 @@ extension BLEManager: CBPeripheralDelegate {
         case machineStatusUUID:
             parseMachineStatus(data)
         case controlPointUUID:
-            // Response: 0x80, request_opcode, result_code
             if data.count >= 3 && data[0] == 0x80 && data[1] == 0x00 && data[2] == 0x01 {
                 hasRequestedControl = true
             }

@@ -19,13 +19,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = statusItem.button {
-            button.title = " 🚶"
+            button.title = "🚶"
             button.action = #selector(togglePopover)
             button.target = self
         }
 
         popover = NSPopover()
-        popover.contentSize = NSSize(width: 320, height: 700)
+        popover.contentSize = NSSize(width: 320, height: 10)
         popover.behavior = .transient
         popover.contentViewController = NSHostingController(
             rootView: PopoverView(ble: ble)
@@ -53,26 +53,28 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             dot = "🔴"
         }
 
+        let text: String
         if !ble.isConnected {
-            button.title = "\(dot) 🚶"
-            return
-        }
-
-        let icon = ble.speed >= 4.0 ? "🏃" : "🚶"
-        let dist = menuBarDistance(ble.distance)
-
-        if ble.speed > 0 {
-            button.title = "\(dot) \(icon) \(String(format: "%.1f", ble.speed))km/h · \(dist)"
+            text = "\(dot)🚶"
         } else {
-            button.title = "\(dot) \(icon) \(dist)"
+            text = "\(dot)🚶\(menuBarDailyProgress())"
         }
+
+        let para = NSMutableParagraphStyle()
+        para.firstLineHeadIndent = -2
+        button.attributedTitle = NSAttributedString(string: text, attributes: [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular),
+            .foregroundColor: NSColor.labelColor.withAlphaComponent(0.55),
+            .paragraphStyle: para,
+        ])
     }
 
-    func menuBarDistance(_ meters: Int) -> String {
-        if meters >= 1000 {
-            return String(format: "%.1fkm", Double(meters) / 1000.0)
+    func menuBarDailyProgress() -> String {
+        let km = Double(ble.dailyDistance) / 1000.0
+        if ble.goalReached {
+            return String(format: "%.1fkm ✓", km)
         }
-        return "\(meters)m"
+        return String(format: "%.1f/5km", km)
     }
 
     @objc func togglePopover() {

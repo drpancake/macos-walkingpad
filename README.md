@@ -2,9 +2,9 @@
 
 A lightweight macOS menu bar app for controlling WalkingPad and KingSmith treadmills over Bluetooth (BLE). No app store, no account, no cloud. Just a simple native app that talks directly to your treadmill.
 
-Made by [https://x.com/jamespotter](James Potter).
+Made by [James Potter](https://x.com/jamespotter).
 
-![Screenshot](screenshot.png)
+<img src="screenshot.png" alt="Screenshot" width="360">
 
 ## Features
 

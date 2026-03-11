@@ -179,6 +179,7 @@ class BLEManager: NSObject, ObservableObject {
     private var vendorWriteChar2: CBCharacteristic?
     private var shouldReconnect = true
     private var hasRequestedControl = false
+    private var pendingStartSpeed: Double?
     private var lastRawDistance: Int = -1
     private var lastCalorieTimestamp: Date?
     private var lastSaveTime: Date = .distantPast
@@ -202,14 +203,10 @@ class BLEManager: NSObject, ObservableObject {
     func startBelt() {
         let startSpeed = profile.defaultSpeedKmh
         targetSpeed = startSpeed
+        pendingStartSpeed = startSpeed
         requestControl()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
-            guard let self = self else { return }
-            let raw = UInt16(startSpeed * 100)
-            self.writeControlPoint(0x02, params: uint16Bytes(raw))
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                self.writeControlPoint(0x07)
-            }
+            self?.writeControlPoint(0x07)
         }
     }
 
@@ -467,6 +464,16 @@ class BLEManager: NSObject, ObservableObject {
             beltState = .running
         } else if beltState == .running {
             beltState = .idle
+        }
+
+        // Once the belt starts running, send the pending start speed
+        if beltState == .running, let pending = pendingStartSpeed {
+            pendingStartSpeed = nil
+            requestControl()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+                let raw = UInt16(pending * 100)
+                self?.writeControlPoint(0x02, params: uint16Bytes(raw))
+            }
         }
 
         // Speed history

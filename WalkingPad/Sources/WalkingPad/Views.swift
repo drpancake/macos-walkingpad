@@ -390,6 +390,7 @@ struct SpeedPresetsView: View {
             presetButton("1", speed: 1.0)
             presetButton("2.5", speed: 2.5)
             presetButton("3", speed: 3.0)
+            presetButton("6", speed: 6.0)
         }
     }
 

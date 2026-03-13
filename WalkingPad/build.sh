@@ -17,9 +17,7 @@ swiftc \
     -o "$APP_DIR/Contents/MacOS/$APP_NAME" \
     -target arm64-apple-macosx13.0 \
     -parse-as-library \
-    Sources/WalkingPad/App.swift \
-    Sources/WalkingPad/BLEManager.swift \
-    Sources/WalkingPad/Views.swift \
+    Sources/WalkingPad/*.swift \
     -framework SwiftUI \
     -framework AppKit \
     -framework CoreBluetooth

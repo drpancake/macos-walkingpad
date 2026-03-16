@@ -571,6 +571,10 @@ struct GoalCelebrationView: View {
 struct FooterView: View {
     @ObservedObject var ble: BLEManager
 
+    private var appVersion: String {
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "–"
+    }
+
     var body: some View {
         HStack {
             Button(action: {
@@ -582,6 +586,12 @@ struct FooterView: View {
             }
             .buttonStyle(.plain)
             .foregroundColor(.accentColor)
+
+            Spacer()
+
+            Text("v\(appVersion)")
+                .font(.system(size: 10))
+                .foregroundColor(.secondary.opacity(0.5))
 
             Spacer()
 
@@ -740,9 +750,21 @@ struct SettingsView: View {
                 }
             }
 
-            SectionHeader(title: "WALKING")
+            SectionHeader(title: "TREADMILL")
 
             VStack(spacing: 10) {
+                HStack {
+                    Text("Name")
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    TextField("e.g. Kingsmith R2 Pro", text: $ble.profile.treadmillName)
+                        .font(.system(size: 12, weight: .medium, design: .monospaced))
+                        .multilineTextAlignment(.trailing)
+                        .frame(width: 160)
+                        .textFieldStyle(.roundedBorder)
+                }
+
                 settingsRow("Daily goal", value: Binding(
                     get: { String(format: "%.1f", ble.profile.dailyGoalKm) },
                     set: { if let v = Double($0), v > 0 { ble.profile.dailyGoalKm = v } }

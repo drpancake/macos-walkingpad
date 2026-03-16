@@ -126,6 +126,7 @@ class WLT6200Protocol: TreadmillProtocol {
         return TreadmillStatus(
             beltState: state,
             speed: speed,
+            avgSpeed: nil,
             distance: distance,
             elapsed: elapsed,
             steps: steps,

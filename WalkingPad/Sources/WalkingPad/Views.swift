@@ -571,6 +571,10 @@ struct GoalCelebrationView: View {
 struct FooterView: View {
     @ObservedObject var ble: BLEManager
 
+    private var appVersion: String {
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "–"
+    }
+
     var body: some View {
         HStack {
             Button(action: {
@@ -582,6 +586,12 @@ struct FooterView: View {
             }
             .buttonStyle(.plain)
             .foregroundColor(.accentColor)
+
+            Spacer()
+
+            Text("v\(appVersion)")
+                .font(.system(size: 10))
+                .foregroundColor(.secondary.opacity(0.5))
 
             Spacer()
 

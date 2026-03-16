@@ -40,6 +40,7 @@ struct SpeedRange {
 struct TreadmillStatus {
     var beltState: BeltState
     var speed: Double
+    var avgSpeed: Double?
     var distance: Int      // meters
     var elapsed: Int        // seconds
     var steps: Int?

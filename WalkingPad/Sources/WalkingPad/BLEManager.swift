@@ -132,6 +132,7 @@ class BLEManager: NSObject, ObservableObject {
     private var peripheral: CBPeripheral?
     private var activeProtocol: TreadmillProtocol?
     private var tickTimer: Timer?
+    private var discoveryTimer: Timer?
     private var shouldReconnect = true
     private var lastRawDistance: Int = -1
     private var lastCalorieTimestamp: Date?
@@ -139,6 +140,7 @@ class BLEManager: NSObject, ObservableObject {
     private var store = WalkPadStore()
     private var pendingServiceCount = 0
     private var completedServiceCount = 0
+    private var protocolSelected = false
 
     private static let dataDir: URL = {
         let dir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".walkingpad")
@@ -230,6 +232,8 @@ class BLEManager: NSObject, ObservableObject {
 
     private func activateProtocol(_ proto: TreadmillProtocol) {
         activeProtocol = proto
+        protocolSelected = true
+        discoveryTimer?.invalidate()
         speedRange = proto.speedRange
         connectionState = .connected
         bleLog("activated protocol: \(proto.modelName)")
@@ -253,10 +257,16 @@ class BLEManager: NSObject, ObservableObject {
     private func applyStatus(_ status: TreadmillStatus) {
         beltState = status.beltState
         speed = status.speed
+        if let avg = status.avgSpeed { avgSpeed = avg }
         distance = status.distance
         elapsed = status.elapsed
         if let s = status.steps { steps = s }
         if let c = status.calories { calories = c }
+
+        // Pick up vendor steps from FTMS protocol (step count via FFC0/FFF0)
+        if let ftms = activeProtocol as? FTMSProtocol, ftms.vendorSteps > 0 {
+            steps = ftms.vendorSteps
+        }
 
         // Speed history
         speedHistory.append(speed)
@@ -339,8 +349,12 @@ class BLEManager: NSObject, ObservableObject {
 
     // MARK: - Scanning
 
+    private let ftmsServiceUUID = CBUUID(string: "1826")
+
     private func startScanning() {
         guard centralManager.state == .poweredOn else { return }
+        // Scan without service filter to find vendor-protocol devices (e.g. WLT6200),
+        // but also accept any device advertising FTMS as a generic fallback.
         centralManager.scanForPeripherals(
             withServices: nil,
             options: [CBCentralManagerScanOptionAllowDuplicatesKey: false]
@@ -506,15 +520,16 @@ extension BLEManager: CBCentralManagerDelegate {
         let name = (peripheral.name ?? "").lowercased()
         let nameMatch = allNamePatterns.contains(where: { name.contains($0) }) && !name.contains("remote")
 
-        guard nameMatch else {
-            bleLog("skip: \(peripheral.name ?? "nil")")
-            return
-        }
+        // Also accept any device advertising FTMS service (generic treadmill fallback)
+        let advertisedServices = advertisementData[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID] ?? []
+        let hasFTMS = advertisedServices.contains(ftmsServiceUUID)
 
-        bleLog("MATCH: \(peripheral.name ?? "nil")")
+        guard nameMatch || hasFTMS else { return }
+
+        bleLog("MATCH: \(peripheral.name ?? "nil") (name=\(nameMatch) ftms=\(hasFTMS))")
         self.peripheral = peripheral
         self.peripheral?.delegate = self
-        self.peripheralName = profile.treadmillName.isEmpty ? (peripheral.name ?? "WalkingPad") : profile.treadmillName
+        self.peripheralName = profile.treadmillName.isEmpty ? (peripheral.name ?? "Treadmill") : profile.treadmillName
         centralManager.stopScan()
         connectionState = .connecting
         centralManager.connect(peripheral, options: nil)
@@ -537,6 +552,7 @@ extension BLEManager: CBCentralManagerDelegate {
         activeProtocol?.reset()
         activeProtocol = nil
         stopTicking()
+        discoveryTimer?.invalidate()
         connectionState = .disconnected
         beltState = .unknown
         lastRawDistance = -1
@@ -561,9 +577,18 @@ extension BLEManager: CBPeripheralDelegate {
         let services = peripheral.services ?? []
         pendingServiceCount = services.count
         completedServiceCount = 0
+        protocolSelected = false
         for service in services {
             bleLog("service: \(service.uuid)")
             peripheral.discoverCharacteristics(nil, for: service)
+        }
+
+        // Timeout: if characteristic discovery doesn't complete within 10s, try anyway
+        discoveryTimer?.invalidate()
+        discoveryTimer = Timer.scheduledTimer(withTimeInterval: 10.0, repeats: false) { [weak self] _ in
+            guard let self = self, !self.protocolSelected else { return }
+            bleLog("service discovery timeout — selecting protocol with what we have")
+            self.selectProtocol()
         }
     }
 
@@ -578,7 +603,8 @@ extension BLEManager: CBPeripheralDelegate {
         }
 
         completedServiceCount += 1
-        if completedServiceCount >= pendingServiceCount {
+        if completedServiceCount >= pendingServiceCount && !protocolSelected {
+            discoveryTimer?.invalidate()
             selectProtocol()
         }
     }

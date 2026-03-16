@@ -4,7 +4,7 @@ import CoreBluetooth
 // MARK: - FTMS Protocol (Fitness Machine Service)
 //
 // Standard BLE Fitness Machine Service (UUID 0x1826).
-// Untested — extracted from original code, never validated on real hardware.
+// Tested with KingSmith Z1D. Also supports vendor step count via FFC0/FFF0.
 //
 // BLE Service: 0x1826 (FTMS)
 //   0x2ACD — Treadmill Data (notify)
@@ -36,17 +36,29 @@ class FTMSProtocol: TreadmillProtocol {
 
     private weak var peripheral: CBPeripheral?
     private var controlPointChar: CBCharacteristic?
+    private var vendorWriteChar1: CBCharacteristic?
+    private var vendorWriteChar2: CBCharacteristic?
     private var hasRequestedControl = false
     private var pendingStartSpeed: Double?
     private var _speedRange = SpeedRange()
+    private var lastBeltState: BeltState = .idle
+    private(set) var vendorSteps: Int = 0
 
-    private let ftmsServiceUUID   = CBUUID(string: "1826")
-    private let treadmillDataUUID = CBUUID(string: "2ACD")
-    private let machineStatusUUID = CBUUID(string: "2ADA")
-    private let controlPointUUID  = CBUUID(string: "2AD9")
-    private let speedRangeUUID    = CBUUID(string: "2AD4")
+    private let ftmsServiceUUID    = CBUUID(string: "1826")
+    private let treadmillDataUUID  = CBUUID(string: "2ACD")
+    private let machineStatusUUID  = CBUUID(string: "2ADA")
+    private let controlPointUUID   = CBUUID(string: "2AD9")
+    private let speedRangeUUID     = CBUUID(string: "2AD4")
     private let trainingStatusUUID = CBUUID(string: "2AD3")
     private let machineFeatureUUID = CBUUID(string: "2ACC")
+
+    // Vendor services for KingSmith step count (optional bonus)
+    private let vendorService1UUID = CBUUID(string: "FFC0")
+    private let vendorNotify1UUID  = CBUUID(string: "FFC1")
+    private let vendorWrite1UUID   = CBUUID(string: "FFC2")
+    private let vendorService2UUID = CBUUID(string: "FFF0")
+    private let vendorNotify2UUID  = CBUUID(string: "FFF1")
+    private let vendorWrite2UUID   = CBUUID(string: "FFF2")
 
     func configure(peripheral: CBPeripheral, services: [CBService]) -> Bool {
         guard let service = services.first(where: { $0.uuid == ftmsServiceUUID }) else {
@@ -69,6 +81,25 @@ class FTMSProtocol: TreadmillProtocol {
         }
         guard foundControl else { return false }
         self.peripheral = peripheral
+
+        // Subscribe to vendor services for step count (optional, KingSmith bonus)
+        for vendorService in services {
+            if vendorService.uuid == vendorService1UUID || vendorService.uuid == vendorService2UUID {
+                for char in vendorService.characteristics ?? [] {
+                    switch char.uuid {
+                    case vendorNotify1UUID, vendorNotify2UUID:
+                        peripheral.setNotifyValue(true, for: char)
+                    case vendorWrite1UUID:
+                        vendorWriteChar1 = char
+                    case vendorWrite2UUID:
+                        vendorWriteChar2 = char
+                    default:
+                        break
+                    }
+                }
+            }
+        }
+
         bleLog("FTMS: configured via 0x1826 service")
         return true
     }
@@ -109,6 +140,8 @@ class FTMSProtocol: TreadmillProtocol {
         switch characteristic.uuid {
         case treadmillDataUUID:
             return parseTreadmillData(data)
+        case vendorNotify1UUID, vendorNotify2UUID:
+            return parseVendorData(data)
         default:
             return nil
         }
@@ -142,14 +175,18 @@ class FTMSProtocol: TreadmillProtocol {
     }
 
     func tick() {
-        // FTMS uses notifications, no polling needed
+        // FTMS uses notifications for core data, but poll vendor stats for step count
+        queryVendorStats()
     }
 
     func reset() {
         peripheral = nil
         controlPointChar = nil
+        vendorWriteChar1 = nil
+        vendorWriteChar2 = nil
         hasRequestedControl = false
         pendingStartSpeed = nil
+        lastBeltState = .idle
     }
 
     // MARK: - Private
@@ -182,7 +219,6 @@ class FTMSProtocol: TreadmillProtocol {
         }
         if (flags & 0x0002) != 0 && offset + 2 <= data.count {
             avgSpeed = Double(data.uint16(at: offset)) / 100.0
-            _ = avgSpeed  // available but not in TreadmillStatus
             offset += 2
         }
         if (flags & 0x0004) != 0 && offset + 3 <= data.count {
@@ -204,7 +240,16 @@ class FTMSProtocol: TreadmillProtocol {
             offset += 2
         }
 
-        let state: BeltState = speed > 0 ? .running : .idle
+        // Belt state: only transition to idle from running (preserve paused/unknown)
+        let state: BeltState
+        if speed > 0 {
+            state = .running
+        } else if lastBeltState == .running {
+            state = .idle
+        } else {
+            state = lastBeltState
+        }
+        lastBeltState = state
 
         // Once the belt starts running, send the pending start speed
         if state == .running, let pending = pendingStartSpeed {
@@ -219,6 +264,7 @@ class FTMSProtocol: TreadmillProtocol {
         return TreadmillStatus(
             beltState: state,
             speed: speed,
+            avgSpeed: avgSpeed > 0 ? avgSpeed : nil,
             distance: distance,
             elapsed: elapsed,
             steps: nil,
@@ -249,6 +295,8 @@ class FTMSProtocol: TreadmillProtocol {
         case 0x08, 0x09: state = .paused
         default: state = .unknown
         }
+        // Keep internal state in sync so parseTreadmillData uses correct lastBeltState
+        if state != .unknown { lastBeltState = state }
         return .machineStatus(state, event)
     }
 
@@ -258,6 +306,29 @@ class FTMSProtocol: TreadmillProtocol {
             return .trainingStatus(.idle)
         }
         return .trainingStatus(nil)
+    }
+
+    private func queryVendorStats() {
+        let sub: UInt8 = 0x01
+        let checksum = 0xa2 ^ sub
+        let cmd = Data([0xf7, 0xa2, sub, checksum, 0xfd])
+        if let char = vendorWriteChar1, let p = peripheral {
+            p.writeValue(cmd, for: char, type: .withoutResponse)
+        }
+        if let char = vendorWriteChar2, let p = peripheral {
+            p.writeValue(cmd, for: char, type: .withoutResponse)
+        }
+    }
+
+    private func parseVendorData(_ data: Data) -> TreadmillStatus? {
+        guard data.count >= 3, data[0] == 0xf7 else { return nil }
+        if data[1] == 0xa2 && data.count >= 18 {
+            let s = Int(data.uint16(at: 7)) | (Int(data.uint16(at: 9)) << 16)
+            if s > 0 && s < 1_000_000 {
+                vendorSteps = s
+            }
+        }
+        return nil
     }
 
     private func parseMachineFeatures(_ data: Data) -> [String] {

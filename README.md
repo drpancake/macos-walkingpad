@@ -2,8 +2,6 @@
 
 A lightweight macOS menu bar app for controlling WalkingPad and KingSmith treadmills over Bluetooth (BLE). No app store, no account, no cloud. Just a simple native app that talks directly to your treadmill.
 
-Made by [James Potter](https://x.com/jamespotter).
-
 <img src="screenshot.png" alt="Screenshot" width="360">
 
 ## Features
@@ -21,10 +19,10 @@ Made by [James Potter](https://x.com/jamespotter).
 
 | Model | Protocol | Status |
 |-------|----------|--------|
+| KingSmith / WalkingPad Z1D | BLE FTMS (0x1826) | Tested |
 | KingSmith R2 Pro (WLT6200) | Proprietary (FE00/FE01/FE02) | Tested |
-| WalkingPad / KingSmith (FTMS) | BLE FTMS (0x1826) | Untested (original code) |
 
-The app auto-detects which protocol to use based on the device name and available BLE services.
+The app auto-detects which protocol to use based on the device name and available BLE services. Any treadmill advertising the FTMS service (UUID `0x1826`) should also work.
 
 **Tested with a different treadmill?** Please open an issue or PR to update the list.
 

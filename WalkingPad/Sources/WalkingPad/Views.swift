@@ -132,8 +132,8 @@ struct MetricsGridView: View {
             }
             HStack(spacing: 0) {
                 MetricCell(
-                    value: formatDist(ble.distance),
-                    unit: distUnit(ble.distance),
+                    value: formatDist(ble.dailyDistance),
+                    unit: distUnit(ble.dailyDistance),
                     color: .blue,
                     icon: "figure.walk"
                 )
